@@ -6,11 +6,11 @@
 // ============================================================
 
 export const SUPABASE_URL = "https://bjwzgybihfouqmifmopg.supabase.co";
-export const SUPABASE_ANON_KEY = "https://bjwzgybihfouqmifmopg.supabase.co/rest/v1/"; // starts with eyJ...
+export const SUPABASE_ANON_KEY = "sb_publishable_GhewzRt8SlptQL0M9vVnzQ_moSUuXKY"; // starts with eyJ...
 
 export const ONLINE_ENABLED =
   SUPABASE_URL.startsWith("https://") &&
-  SUPABASE_ANON_KEY.startsWith("eyJ");
+  SUPABASE_ANON_KEY.length > 20;
 
 let _supabase = null;
 
