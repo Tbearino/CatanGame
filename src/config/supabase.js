@@ -6,7 +6,7 @@
 // ============================================================
 
 export const SUPABASE_URL = "https://bjwzgybihfouqmifmopg.supabase.co";
-export const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_PUBLIC_KEY_HERE"; // starts with eyJ...
+export const SUPABASE_ANON_KEY = "https://bjwzgybihfouqmifmopg.supabase.co/rest/v1/"; // starts with eyJ...
 
 export const ONLINE_ENABLED =
   SUPABASE_URL.startsWith("https://") &&
