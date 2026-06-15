@@ -6,7 +6,7 @@
 // ============================================================
 
 export const SUPABASE_URL = "https://bjwzgybihfouqmifmopg.supabase.co";
-export const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_PUBLIC_KEY_HERE";
+export const SUPABASE_ANON_KEY = "sb_publishable_GhewzRt8SlptQL0M9vVnzQ_moSUuXKY";
 
 // Works with both old (eyJ...) and new (sb_publishable_...) key formats
 export const ONLINE_ENABLED =
@@ -37,4 +37,3 @@ export function makeRoomCode() {
   return `${pick(4)}-${pick(4)}`;
 }
 
-sb_publishable_GhewzRt8SlptQL0M9vVnzQ_moSUuXKY
