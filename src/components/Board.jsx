@@ -8,8 +8,8 @@ import { T, HEX_SIZE, DOT_COUNT, TERRAIN_STYLES, PLAYERS, SETUP_ORDER } from "..
 import { hexCorners } from "../game/board";
 import { vById, eById, canPlaceSettlement, canPlaceRoad } from "../game/rules";
 
-const W = Math.sqrt(3) * HEX_SIZE * 5 + 50;
-const H = HEX_SIZE * 8 + 50;
+const W = Math.sqrt(3) * HEX_SIZE * 5 + 100;
+const H = HEX_SIZE * 8 + 100;
 
 export default function Board({
   g, myTurn, placingSettlement, placingRoad,
@@ -43,7 +43,7 @@ export default function Board({
         </defs>
 
         {/* ocean */}
-        <circle cx="0" cy="0" r={HEX_SIZE * 4.55} fill="url(#seaGrad)" />
+        <circle cx="0" cy="0" r={HEX_SIZE * 5.0} fill="url(#seaGrad)" />
         {[4.5, 4.0, 3.5].map((m, i) => (
           <circle key={i} cx="0" cy="0" r={HEX_SIZE * m} fill="none"
             stroke={T.seaLine} strokeWidth="0.6" opacity={0.25 - i * 0.05} />
@@ -64,7 +64,7 @@ export default function Board({
           ))}
           <circle r="1.6" fill={T.wax} />
         </g>
-        <circle cx="0" cy="0" r={HEX_SIZE * 4.55} fill="none" stroke={T.gold} strokeWidth="1.5" opacity="0.4" />
+        <circle cx="0" cy="0" r={HEX_SIZE * 5.0} fill="none" stroke={T.gold} strokeWidth="1.5" opacity="0.4" />
 
         {/* tiles */}
         {g.board.tiles.map(tile => {

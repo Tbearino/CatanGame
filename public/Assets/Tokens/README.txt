@@ -1,1 +1,1 @@
-Settlement, city, road art goes here later
+Settlement, city, road art
