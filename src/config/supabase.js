@@ -6,8 +6,9 @@
 // ============================================================
 
 export const SUPABASE_URL = "https://bjwzgybihfouqmifmopg.supabase.co";
-export const SUPABASE_ANON_KEY = "sb_publishable_GhewzRt8SlptQL0M9vVnzQ_moSUuXKY"; // starts with eyJ...
+export const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_PUBLIC_KEY_HERE";
 
+// Works with both old (eyJ...) and new (sb_publishable_...) key formats
 export const ONLINE_ENABLED =
   SUPABASE_URL.startsWith("https://") &&
   SUPABASE_ANON_KEY.length > 20;
@@ -19,7 +20,9 @@ export async function getSupabase() {
   if (_supabase) return _supabase;
   try {
     const mod = await import("@supabase/supabase-js");
-    _supabase = mod.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    _supabase = mod.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      realtime: { params: { eventsPerSecond: 10 } },
+    });
     return _supabase;
   } catch (e) {
     console.warn("Supabase not available — running local only.", e);

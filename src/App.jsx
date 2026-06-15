@@ -3,12 +3,29 @@
 //  Top-level screen router: Menu → Lobby or Game
 // ============================================================
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { T, PLAYERS } from "./game/constants";
 import { initGame } from "./game/board";
 import { ONLINE_ENABLED, getSupabase, makeRoomCode } from "./config/supabase";
 import Game from "./Game";
 import Lobby from "./components/Lobby";
+
+// Save/load session from URL hash so refresh keeps you in the game
+// URL looks like: yoursite.netlify.app/#room=K7M2-PXQ9&seat=0
+function saveSessionToURL(roomCode, seat) {
+  window.location.hash = `room=${roomCode}&seat=${seat}`;
+}
+function loadSessionFromURL() {
+  const hash = window.location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  const room = params.get("room");
+  const seat = params.get("seat");
+  if (room && seat !== null) return { roomCode: room, mySeat: parseInt(seat) };
+  return null;
+}
+function clearSessionURL() {
+  history.replaceState(null, "", window.location.pathname);
+}
 
 export default function App() {
   const [screen, setScreen] = useState("menu");
@@ -17,7 +34,24 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // On first load, check URL for an existing online session
+  useEffect(() => {
+    const saved = loadSessionFromURL();
+    if (!saved) return;
+    (async () => {
+      const sb = await getSupabase();
+      if (!sb) return;
+      const { data } = await sb.from("games").select("state").eq("id", saved.roomCode).single();
+      if (data?.state) {
+        setSession({ online:true, roomCode:saved.roomCode, mySeat:saved.mySeat, initialState:data.state });
+        setGameKey(k => k + 1);
+        setScreen("game");
+      }
+    })();
+  }, []);
+
   const startLocal = () => {
+    clearSessionURL();
     setSession({ online:false, roomCode:null, mySeat:0, initialState:null });
     setGameKey(k => k + 1);
     setScreen("game");
@@ -32,6 +66,7 @@ export default function App() {
     const { error: err } = await sb.from("games").upsert({ id: code, state, updated_at: new Date().toISOString() });
     setBusy(false);
     if (err) { setError("Couldn't create room: " + err.message); return; }
+    saveSessionToURL(code, 0);
     setSession({ online:true, roomCode:code, mySeat:0, initialState:state });
     setGameKey(k => k + 1);
     setScreen("game");
@@ -46,9 +81,15 @@ export default function App() {
     const { data, error: err } = await sb.from("games").select("state").eq("id", code).single();
     setBusy(false);
     if (err || !data) { setError("Room not found. Check the code."); return; }
+    saveSessionToURL(code, 1);
     setSession({ online:true, roomCode:code, mySeat:1, initialState:data.state });
     setGameKey(k => k + 1);
     setScreen("game");
+  };
+
+  const goToMenu = () => {
+    clearSessionURL();
+    setScreen("menu");
   };
 
   return (
@@ -69,7 +110,7 @@ export default function App() {
       `}</style>
 
       {screen === "menu" && <MenuScreen onLocal={startLocal} onOnline={() => { setScreen("lobby"); setError(""); }} />}
-      {screen === "lobby" && <Lobby onHost={hostOnline} onJoin={joinOnline} onBack={() => setScreen("menu")} busy={busy} error={error} />}
+      {screen === "lobby" && <Lobby onHost={hostOnline} onJoin={joinOnline} onBack={goToMenu} busy={busy} error={error} />}
       {screen === "game" && (
         <>
           <div style={{ width:"100%", maxWidth:1200, display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
@@ -79,7 +120,7 @@ export default function App() {
                 Room <b style={{ fontFamily:"'Cinzel',serif" }}>{session.roomCode}</b> · you are {PLAYERS[session.mySeat].name}
               </span>
             )}
-            <button onClick={() => setScreen("menu")} style={{
+            <button onClick={goToMenu} style={{
               background:"transparent", border:`1px solid ${T.inkSoft}`, color:T.gold,
               borderRadius:7, padding:"5px 14px", fontSize:12, cursor:"pointer",
             }}>← Harbor</button>

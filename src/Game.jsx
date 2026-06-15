@@ -58,22 +58,43 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
 
   const sbRef = useRef(null);
 
-  // ---- online sync: subscribe to the shared room row ----
+  // ---- online sync: Realtime subscription + polling fallback ----
   useEffect(() => {
     if (!online || !roomCode) return;
     let channel;
+    let pollTimer;
     let cancelled = false;
+
     (async () => {
       const sb = await getSupabase();
       if (!sb || cancelled) return;
       sbRef.current = sb;
+
+      // Try Realtime subscription
       channel = sb.channel(`room-${roomCode}`)
         .on("postgres_changes",
           { event: "*", schema: "public", table: "games", filter: `id=eq.${roomCode}` },
-          (payload) => { if (payload.new?.state) setG(payload.new.state); })
-        .subscribe();
+          (payload) => {
+            if (payload.new?.state) setG(payload.new.state);
+          })
+        .subscribe((status) => {
+          console.log("Realtime status:", status);
+        });
+
+      // Polling fallback: check for updates every 2 seconds
+      // This ensures it works even if Realtime isn't set up perfectly
+      pollTimer = setInterval(async () => {
+        if (cancelled) return;
+        const { data } = await sb.from("games").select("state").eq("id", roomCode).single();
+        if (data?.state) setG(data.state);
+      }, 2000);
     })();
-    return () => { cancelled = true; if (channel && sbRef.current) sbRef.current.removeChannel(channel); };
+
+    return () => {
+      cancelled = true;
+      if (channel && sbRef.current) sbRef.current.removeChannel(channel);
+      if (pollTimer) clearInterval(pollTimer);
+    };
   }, [online, roomCode]);
 
   const pushState = (s) => {
