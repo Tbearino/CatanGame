@@ -36,3 +36,5 @@ export function makeRoomCode() {
     chars[Math.floor(Math.random() * chars.length)]).join("");
   return `${pick(4)}-${pick(4)}`;
 }
+
+sb_publishable_GhewzRt8SlptQL0M9vVnzQ_moSUuXKY
