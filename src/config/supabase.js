@@ -6,7 +6,7 @@
 // ============================================================
 
 export const SUPABASE_URL = "https://bjwzgybihfouqmifmopg.supabase.co";
-export const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_PUBLIC_KEY_HERE";
+export const SUPABASE_ANON_KEY = "https://vscode.dev/github/Tbearino/CatanGame";
 
 // Works with both old (eyJ...) and new (sb_publishable_...) key formats
 export const ONLINE_ENABLED =
