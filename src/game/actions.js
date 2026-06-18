@@ -1,7 +1,6 @@
 // ============================================================
 //  src/game/actions.js
 //  What happens when dice are rolled, robber moves, etc.
-//  Mutates a cloned game state object — no visuals.
 // ============================================================
 
 import { TERRAIN_RESOURCE, PLAYERS, RES } from "./constants";
@@ -27,6 +26,27 @@ export function distribute(s, total) {
   s.lastGained = gains;
 }
 
+// ---- CHECK WHO MUST DISCARD (on a 7, anyone with >7 cards) ----
+// Returns array of { playerId, amount } — doesn't discard anything yet
+export function getDiscardRequirements(s) {
+  const result = [];
+  PLAYERS.forEach(p => {
+    const total = Object.values(s.hands[p.id]).reduce((a, b) => a + b, 0);
+    if (total > 7) {
+      result.push({ playerId: p.id, amount: Math.floor(total / 2) });
+    }
+  });
+  return result;
+}
+
+// ---- ACTUALLY DISCARD the selected cards ----
+// selected = { wood: 2, brick: 1, ... }
+export function applyDiscard(s, playerId, selected) {
+  Object.entries(selected).forEach(([res, n]) => {
+    s.hands[playerId][res] -= n;
+  });
+}
+
 // ---- ROBBER: steal a random card from someone on the tile ----
 export function stealFrom(s, tileId, thiefId) {
   const victims = new Set();
@@ -48,23 +68,4 @@ export function stealFrom(s, tileId, thiefId) {
   s.hands[victim][stolen]--;
   s.hands[thiefId][stolen]++;
   return { victim, stolen };
-}
-
-// ---- DISCARD HALVES (when a 7 is rolled, anyone with >7 cards discards half) ----
-export function discardHalves(s) {
-  const notes = [];
-  PLAYERS.forEach(p => {
-    const total = Object.values(s.hands[p.id]).reduce((a, b) => a + b, 0);
-    if (total > 7) {
-      let toDiscard = Math.floor(total / 2);
-      const pool = [];
-      Object.entries(s.hands[p.id]).forEach(([r, n]) => {
-        for (let i = 0; i < n; i++) pool.push(r);
-      });
-      const shuffled = shuffle(pool);
-      for (let i = 0; i < toDiscard; i++) s.hands[p.id][shuffled[i]]--;
-      notes.push(`${p.name} discards ${toDiscard}`);
-    }
-  });
-  return notes;
 }

@@ -19,7 +19,7 @@ import {
   canPlaceSettlement, canPlaceRoad, countPieces,
   updateBonuses, checkWin, victoryPoints,
 } from "./game/rules";
-import { distribute, stealFrom, discardHalves } from "./game/actions";
+import { distribute, stealFrom, getDiscardRequirements, applyDiscard } from "./game/actions";
 import { getSupabase } from "./config/supabase";
 
 import Board from "./components/Board";
@@ -67,6 +67,9 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
   const [giving, setGiving] = useState({ ...EMPTY_TRADE });
   const [getting, setGetting] = useState({ ...EMPTY_TRADE });
   const [yopPicked, setYopPicked] = useState([]);
+  // Discard state (when 7 is rolled and someone has >7 cards)
+  const [discardQueue, setDiscardQueue] = useState([]); // [{playerId, amount}, ...]
+  const [discardSelected, setDiscardSelected] = useState({ ...EMPTY_TRADE });
   const sbRef = useRef(null);
 
   // ---- online sync ----
@@ -200,8 +203,15 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
       s.rolling = false; s.die1 = d1; s.die2 = d2; s.hasRolled = true;
       const total = d1 + d2; s.history.push(total); s.lastGained = {};
       if (total === 7) {
-        const notes = discardHalves(s); s.mode = "robber";
-        s.message = `🤠 A 7! ${notes.length ? notes.join(", ") + ". " : ""}Move the robber.`;
+        const reqs = getDiscardRequirements(s);
+        if (reqs.length > 0) {
+          s.mode = "discard";
+          s.discardQueue = reqs; // [{playerId, amount}, ...]
+          s.message = `🤠 A 7! ${reqs.map(r => `${PLAYERS[r.playerId].name} must discard ${r.amount} cards`).join(", ")}.`;
+        } else {
+          s.mode = "robber";
+          s.message = "🤠 A 7! Move the robber.";
+        }
       } else {
         distribute(s, total);
         const gained = Object.entries(s.lastGained).map(([pid, res]) =>
@@ -283,6 +293,48 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
     s.hands[s.current][res] += taken; s.mode = null; s.message = `💰 Took ${taken} ${RES[res].emoji}!`;
   });
 
+  // ---- DISCARD (when 7 is rolled, choose which cards to throw away) ----
+  const discardingPlayer = g.mode === "discard" && g.discardQueue?.length > 0
+    ? g.discardQueue[0] : null; // {playerId, amount}
+  const discardTotal = Object.values(discardSelected).reduce((a, b) => a + b, 0);
+  const canConfirmDiscard = discardingPlayer && discardTotal === discardingPlayer.amount;
+
+  // In online mode: only the player who needs to discard can interact
+  const isMyDiscard = discardingPlayer && (!online || discardingPlayer.playerId === mySeat);
+
+  const discardClickCard = (res) => {
+    if (!discardingPlayer || !isMyDiscard) return;
+    const hand = g.hands[discardingPlayer.playerId];
+    // Can't select more than you have
+    if (discardSelected[res] >= hand[res]) return;
+    // Can't select more than needed
+    if (discardTotal >= discardingPlayer.amount) return;
+    setDiscardSelected(s => ({ ...s, [res]: s[res] + 1 }));
+  };
+
+  const discardRemoveCard = (res) => {
+    setDiscardSelected(s => ({ ...s, [res]: Math.max(0, s[res] - 1) }));
+  };
+
+  const confirmDiscard = () => {
+    if (!canConfirmDiscard) return;
+    const pid = discardingPlayer.playerId;
+    const selected = { ...discardSelected };
+    setDiscardSelected({ ...EMPTY_TRADE });
+    act(s => {
+      applyDiscard(s, pid, selected);
+      s.discardQueue = s.discardQueue.slice(1); // remove this player from queue
+      if (s.discardQueue.length > 0) {
+        const next = s.discardQueue[0];
+        s.message = `${PLAYERS[next.playerId].name} must discard ${next.amount} cards.`;
+      } else {
+        // All done discarding — now move the robber
+        s.mode = "robber";
+        s.message = "All discards done. Move the robber!";
+      }
+    });
+  };
+
   // ---- RENDER ----
   const placingSettlement = myTurn && ((g.phase === "setup" && g.setupSub === "settlement") || g.mode === "settlement");
   const placingRoad = myTurn && ((g.phase === "setup" && g.setupSub === "road") || g.mode === "road");
@@ -303,13 +355,89 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
         display: "flex", justifyContent: "center", alignItems: "center", gap: 10,
       }}>
         <span>{g.message}</span>
-        {g.mode && g.mode !== "robber" && g.mode !== "trade" && g.freeRoads === 0 && g.mode !== "yearOfPlenty" && g.mode !== "monopoly" && (
+        {g.mode && g.mode !== "robber" && g.mode !== "trade" && g.mode !== "discard" && g.freeRoads === 0 && g.mode !== "yearOfPlenty" && g.mode !== "monopoly" && (
           <button onClick={cancelMode} style={{
             background: "transparent", border: `1px solid ${T.inkSoft}`,
             color: T.inkSoft, borderRadius: 5, padding: "2px 8px", fontSize: 11, cursor: "pointer",
           }}>cancel</button>
         )}
       </div>
+
+      {/* ══════ DISCARD SELECTION (when 7 is rolled) ══════ */}
+      {g.mode === "discard" && discardingPlayer && (
+        <div style={{
+          background: `linear-gradient(150deg, #f4ead4, ${T.parchment})`,
+          border: `2px solid ${T.wax}`, borderRadius: 12,
+          padding: "16px 20px", marginBottom: 12,
+          boxShadow: `0 0 20px ${T.wax}44, 0 4px 12px #00000044`,
+        }}>
+          <div style={{ textAlign: "center", marginBottom: 10 }}>
+            <span className="disp" style={{ color: PLAYERS[discardingPlayer.playerId].color, fontSize: 16, fontWeight: 700 }}>
+              {PLAYERS[discardingPlayer.playerId].name}
+            </span>
+            <span style={{ color: T.ink, fontSize: 14 }}>
+              {" "}— choose {discardingPlayer.amount} cards to discard
+            </span>
+            <span style={{
+              marginLeft: 10, fontSize: 14, fontWeight: 700,
+              color: canConfirmDiscard ? "#2a7a3a" : T.wax,
+            }}>
+              ({discardTotal} / {discardingPlayer.amount})
+            </span>
+          </div>
+
+          {/* clickable resource cards to select */}
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 10 }}>
+            {Object.entries(RES).map(([key, r]) => {
+              const have = g.hands[discardingPlayer.playerId][key] || 0;
+              const selected = discardSelected[key] || 0;
+              if (have === 0) return null;
+              return (
+                <div key={key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  {/* the card button — click to add to discard */}
+                  <button onClick={() => discardClickCard(key)} disabled={!isMyDiscard || selected >= have || discardTotal >= discardingPlayer.amount}
+                    style={{
+                      width: 60, height: 80,
+                      background: selected > 0 ? `linear-gradient(180deg, ${r.color}33, #fffdf6)` : "linear-gradient(180deg, #fffdf6, #f0e8d4)",
+                      border: `2px solid ${selected > 0 ? r.color : "#c8b89a"}`,
+                      borderRadius: 8, cursor: isMyDiscard ? "pointer" : "default",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      position: "relative",
+                      boxShadow: selected > 0 ? `0 0 8px ${r.color}66` : "0 2px 4px #00000022",
+                    }}>
+                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 6, background: r.color, borderRadius: "6px 6px 0 0" }} />
+                    <span style={{ fontSize: 24, marginTop: 4 }}>{r.emoji}</span>
+                    <span style={{ fontSize: 12, color: T.ink, fontWeight: 700 }}>{have}</span>
+                  </button>
+                  {/* selected count + remove */}
+                  {selected > 0 && (
+                    <button onClick={() => discardRemoveCard(key)} style={{
+                      background: T.wax, color: "#fff", border: "none", borderRadius: 10,
+                      padding: "2px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    }}>
+                      -{selected}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* confirm */}
+          <div style={{ textAlign: "center" }}>
+            <button onClick={confirmDiscard} disabled={!canConfirmDiscard} style={{
+              background: canConfirmDiscard ? `linear-gradient(135deg, ${T.goldSoft}, ${T.gold})` : "#e7ddc6",
+              color: canConfirmDiscard ? "#2a1d08" : "#a99a7a",
+              border: "none", borderRadius: 8, padding: "10px 30px",
+              fontSize: 15, fontWeight: 700, fontFamily: "'Cinzel',serif",
+              letterSpacing: 1, cursor: canConfirmDiscard ? "pointer" : "not-allowed",
+              boxShadow: canConfirmDiscard ? "0 3px 0 #8a6a18" : "none",
+            }}>
+              {canConfirmDiscard ? "DISCARD" : `select ${discardingPlayer.amount - discardTotal} more`}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* YOP / Monopoly */}
       {(g.mode === "yearOfPlenty" || g.mode === "monopoly") && (
