@@ -33,7 +33,8 @@ function Card({ resource, index, total, glowing, gained, onClick, disabled }) {
   const center = (total - 1) / 2;
   const offset = index - center;
   const angle = offset * (total > 10 ? 3 : total > 6 ? 4 : 5);
-  const lift = -(offset * offset) * 1.8;
+  const maxOff = (total - 1) / 2;
+  const lift = ((offset * offset) - (maxOff * maxOff)) * 1.2;
 
   return (
     <div
