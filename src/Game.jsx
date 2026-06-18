@@ -1,9 +1,11 @@
 // ============================================================
-//  src/Game.jsx — v4 "The Explorer's Chart"
-//  Layout from Dorothy's wireframe:
-//    TOP:    title bar + message banner
-//    MIDDLE: big board (left) + player panels (right)
-//    BOTTOM: card fan + dice/actions + trade table
+//  src/Game.jsx — v4.1
+//  Layout fixes from Dorothy's feedback:
+//  - End Turn always next to dice, greyed when not your turn
+//  - Dice fairness + roll history always visible, stacked right
+//  - Board not cut off, better space usage
+//  - Trade buttons bigger, especially Trade
+//  - Cards fan properly with gain badges
 // ============================================================
 
 import { useState, useEffect, useRef } from "react";
@@ -37,18 +39,20 @@ function CostTag({ cost }) {
   );
 }
 
-function BuildBtn({ label, cost, enabled, onClick, active }) {
+function BuildBtn({ label, cost, enabled, onClick, active, big }) {
   return (
     <button onClick={onClick} disabled={!enabled} style={{
       background: active ? T.gold + "44" : enabled ? "#fff6e2" : "#e7ddc6",
       border: `1.5px solid ${active ? T.gold : enabled ? T.gold : T.parchDeep}`,
       color: enabled ? T.ink : "#a99a7a",
-      borderRadius: 7, padding: "6px 10px", fontSize: 12,
+      borderRadius: 7, padding: big ? "10px 18px" : "7px 12px",
+      fontSize: big ? 14 : 12,
       cursor: enabled ? "pointer" : "not-allowed",
       boxShadow: active ? `0 0 8px ${T.gold}66` : enabled ? "0 1px 3px #00000022" : "none",
       display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+      fontWeight: 600,
     }}>
-      <span style={{ fontWeight: 600 }}>{label}</span>
+      <span>{label}</span>
       {Object.keys(cost).length > 0 && <CostTag cost={cost} />}
     </button>
   );
@@ -58,16 +62,11 @@ function BuildBtn({ label, cost, enabled, onClick, active }) {
 export default function Game({ session = { online:false, mySeat:0, roomCode:null, initialState:null } }) {
   const { online, mySeat, roomCode } = session;
   const [g, setG] = useState(() => session.initialState || initGame());
-  const [showStats, setShowStats] = useState(false);
+  const [showStats, setShowStats] = useState(true); // visible by default now
   const [copied, setCopied] = useState(false);
-
-  // Trade state
   const [giving, setGiving] = useState({ ...EMPTY_TRADE });
   const [getting, setGetting] = useState({ ...EMPTY_TRADE });
-
-  // Year of Plenty / Monopoly
   const [yopPicked, setYopPicked] = useState([]);
-
   const sbRef = useRef(null);
 
   // ---- online sync ----
@@ -82,7 +81,7 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
         .on("postgres_changes",
           { event: "*", schema: "public", table: "games", filter: `id=eq.${roomCode}` },
           (payload) => { if (payload.new?.state) setG(payload.new.state); })
-        .subscribe((status) => console.log("Realtime:", status));
+        .subscribe();
       pollTimer = setInterval(async () => {
         if (cancelled) return;
         const { data } = await sb.from("games").select("state").eq("id", roomCode).single();
@@ -104,6 +103,7 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
   const me = online ? mySeat : g.current;
   const myHand = g.hands[me];
   const pieces = countPieces(g, me);
+  const opponentId = me === 0 ? 1 : 0;
 
   const act = (fn) => {
     if (online && !myTurn) return;
@@ -121,7 +121,7 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
     setCopied(true); setTimeout(() => setCopied(false), 1500);
   };
 
-  // ---- CLICK HANDLERS (same logic as before) ----
+  // ---- CLICK HANDLERS ----
   const clickVertex = (vId) => act(s => {
     if (s.phase === "setup" && s.setupSub === "settlement") {
       const pid = SETUP_ORDER[s.setupStep];
@@ -137,19 +137,17 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
         s.lastGained = { [pid]: gained };
       }
       s.setupSub = "road"; s.lastSetupVertex = vId;
-      s.message = `${PLAYERS[pid].name} — place a road next to that settlement!`;
+      s.message = `${PLAYERS[pid].name} — place a road!`;
     } else if (s.mode === "settlement") {
       if (!canPlaceSettlement(s, vId, s.current, true)) return;
       pay(s, s.current, COSTS.settlement);
       s.settlements.push({ playerId: s.current, vertexId: vId, isCity: false });
-      s.mode = null; s.message = "Settlement built! 🏠";
-      updateBonuses(s); checkWin(s);
+      s.mode = null; s.message = "Settlement built! 🏠"; updateBonuses(s); checkWin(s);
     } else if (s.mode === "city") {
       const b = s.settlements.find(b => b.vertexId === vId);
       if (!b || b.playerId !== s.current || b.isCity) return;
       pay(s, s.current, COSTS.city); b.isCity = true;
-      s.mode = null; s.message = "City built! 🏛️";
-      checkWin(s);
+      s.mode = null; s.message = "City built! 🏛️"; checkWin(s);
     }
   });
 
@@ -196,8 +194,7 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
   const rollDice = () => {
     if (online && !myTurn) return;
     if (g.rolling || g.hasRolled || g.phase !== "play" || g.mode) return;
-    const d1 = Math.ceil(Math.random() * 6);
-    const d2 = Math.ceil(Math.random() * 6);
+    const d1 = Math.ceil(Math.random() * 6), d2 = Math.ceil(Math.random() * 6);
     act(s => { s.rolling = true; });
     setTimeout(() => act(s => {
       s.rolling = false; s.die1 = d1; s.die2 = d2; s.hasRolled = true;
@@ -207,8 +204,10 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
         s.message = `🤠 A 7! ${notes.length ? notes.join(", ") + ". " : ""}Move the robber.`;
       } else {
         distribute(s, total);
-        s.message = Object.keys(s.lastGained).length > 0
-          ? `Rolled ${total} — resources collected!` : `Rolled ${total} — no production.`;
+        const gained = Object.entries(s.lastGained).map(([pid, res]) =>
+          `${PLAYERS[pid].name}: ${Object.entries(res).map(([r,n]) => `${n}×${RES[r].emoji}`).join(" ")}`
+        ).join(" · ");
+        s.message = gained ? `Rolled ${total} — ${gained}` : `Rolled ${total} — no production.`;
       }
     }), 420);
   };
@@ -235,8 +234,7 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
   });
 
   const buyDev = () => act(s => {
-    if (!s.hasRolled || s.mode || s.devDeck.length === 0) return;
-    if (!canAfford(s.hands[s.current], COSTS.dev)) return;
+    if (!s.hasRolled || s.mode || s.devDeck.length === 0 || !canAfford(s.hands[s.current], COSTS.dev)) return;
     pay(s, s.current, COSTS.dev);
     s.devHands[s.current].push({ type: s.devDeck.pop(), turnBought: s.turn });
     s.message = "Development card bought! 🃏"; checkWin(s);
@@ -246,86 +244,60 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
     const card = s.devHands[s.current][index];
     if (!card || card.type === "vp" || s.playedDev || card.turnBought === s.turn || s.mode) return;
     s.devHands[s.current].splice(index, 1); s.playedDev = true;
-    if (card.type === "knight") {
-      s.knights[s.current]++; s.mode = "robber";
-      s.message = "⚔️ Knight! Move the robber."; updateBonuses(s); checkWin(s);
-    } else if (card.type === "roadBuilding") {
-      s.freeRoads = 2; s.mode = "road"; s.message = "🛤️ Place 2 free roads!";
-    } else if (card.type === "yearOfPlenty") {
-      s.mode = "yearOfPlenty"; s.message = "🌟 Pick 2 resources from the bank.";
-    } else if (card.type === "monopoly") {
-      s.mode = "monopoly"; s.message = "💰 Pick a resource to take from everyone.";
-    }
+    if (card.type === "knight") { s.knights[s.current]++; s.mode = "robber"; s.message = "⚔️ Knight! Move the robber."; updateBonuses(s); checkWin(s); }
+    else if (card.type === "roadBuilding") { s.freeRoads = 2; s.mode = "road"; s.message = "🛤️ Place 2 free roads!"; }
+    else if (card.type === "yearOfPlenty") { s.mode = "yearOfPlenty"; s.message = "🌟 Pick 2 resources."; }
+    else if (card.type === "monopoly") { s.mode = "monopoly"; s.message = "💰 Pick a resource to steal."; }
   });
 
-  // ---- TRADE (click cards into trade table) ----
+  // ---- TRADE ----
   const startTrade = () => {
     act(s => { s.mode = "trade"; s.message = "Click your cards to offer, then pick from the bank."; });
     setGiving({ ...EMPTY_TRADE }); setGetting({ ...EMPTY_TRADE });
   };
-
-  const addGive = (res) => {
-    const available = myHand[res] - giving[res];
-    if (available <= 0) return;
-    setGiving(g => ({ ...g, [res]: g[res] + 1 }));
-  };
-
+  const addGive = (res) => { if (myHand[res] - giving[res] > 0) setGiving(g => ({ ...g, [res]: g[res] + 1 })); };
   const removeGive = (res) => setGiving(g => ({ ...g, [res]: Math.max(0, g[res] - 1) }));
   const addGet = (res) => setGetting(g => ({ ...g, [res]: g[res] + 1 }));
   const removeGet = (res) => setGetting(g => ({ ...g, [res]: Math.max(0, g[res] - 1) }));
-
   const confirmTrade = () => act(s => {
     Object.entries(giving).forEach(([r, n]) => { s.hands[s.current][r] -= n; });
     Object.entries(getting).forEach(([r, n]) => { s.hands[s.current][r] += n; });
-    s.mode = null;
-    s.message = "Trade complete! ✅";
+    s.mode = null; s.message = "Trade complete! ✅";
     setGiving({ ...EMPTY_TRADE }); setGetting({ ...EMPTY_TRADE });
   });
-
   const cancelMode = () => {
-    act(s => {
-      if (s.mode === "robber") return;
-      if (s.freeRoads > 0) return;
-      s.mode = null; s.message = "Cancelled.";
-    });
+    act(s => { if (s.mode === "robber" || s.freeRoads > 0) return; s.mode = null; s.message = "Cancelled."; });
     setGiving({ ...EMPTY_TRADE }); setGetting({ ...EMPTY_TRADE });
   };
 
-  // ---- YOP / MONOPOLY ----
+  // YOP / Monopoly
   const pickYop = (res) => {
     const next = [...yopPicked, res];
     if (next.length < 2) { setYopPicked(next); return; }
     setYopPicked([]);
-    act(s => {
-      next.forEach(r => { s.hands[s.current][r]++; }); s.mode = null;
-      s.message = `Got ${RES[next[0]].emoji} and ${RES[next[1]].emoji}!`;
-    });
+    act(s => { next.forEach(r => { s.hands[s.current][r]++; }); s.mode = null; s.message = `Got ${RES[next[0]].emoji} + ${RES[next[1]].emoji}!`; });
   };
-
   const pickMonopoly = (res) => act(s => {
     let taken = 0;
     PLAYERS.forEach(p => { if (p.id !== s.current) { taken += s.hands[p.id][res]; s.hands[p.id][res] = 0; } });
-    s.hands[s.current][res] += taken; s.mode = null;
-    s.message = `💰 Took ${taken} ${RES[res].emoji}!`;
+    s.hands[s.current][res] += taken; s.mode = null; s.message = `💰 Took ${taken} ${RES[res].emoji}!`;
   });
 
-  // ---- RENDER HELPERS ----
+  // ---- RENDER ----
   const placingSettlement = myTurn && ((g.phase === "setup" && g.setupSub === "settlement") || g.mode === "settlement");
   const placingRoad = myTurn && ((g.phase === "setup" && g.setupSub === "road") || g.mode === "road");
   const counts = {}; g.history.forEach(t => { counts[t] = (counts[t] || 0) + 1; });
   const maxCount = Math.max(1, ...Object.values(counts));
-  const opponentId = me === 0 ? 1 : 0;
+  const canEndTurn = g.hasRolled && !g.mode && myTurn && g.phase === "play";
 
-  // ============================================================
   return (
     <div style={{ width: "100%", maxWidth: 1300 }}>
 
-      {/* ══════════ MESSAGE BANNER ══════════ */}
+      {/* ══════ MESSAGE BANNER ══════ */}
       <div style={{
         textAlign: "center", padding: "8px 18px",
         background: `linear-gradient(#f3e9d2, ${T.parchment})`,
-        border: `1px solid ${T.parchDeep}`,
-        borderLeft: `4px solid ${PLAYERS[activePlayer].color}`,
+        border: `1px solid ${T.parchDeep}`, borderLeft: `4px solid ${PLAYERS[activePlayer].color}`,
         borderRadius: 6, marginBottom: 10, fontSize: 14, color: T.ink,
         boxShadow: "0 2px 8px #00000033",
         display: "flex", justifyContent: "center", alignItems: "center", gap: 10,
@@ -339,39 +311,33 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
         )}
       </div>
 
-      {/* YOP / Monopoly pickers */}
+      {/* YOP / Monopoly */}
       {(g.mode === "yearOfPlenty" || g.mode === "monopoly") && (
         <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 10 }}>
           {Object.entries(RES).map(([r, info]) => (
-            <button key={r}
-              onClick={() => g.mode === "yearOfPlenty" ? pickYop(r) : pickMonopoly(r)}
-              style={{
-                background: info.color + "33", border: `2px solid ${info.color}`,
-                color: T.parchment, borderRadius: 10, padding: "8px 16px", fontSize: 18, cursor: "pointer",
-              }}>
+            <button key={r} onClick={() => g.mode === "yearOfPlenty" ? pickYop(r) : pickMonopoly(r)}
+              style={{ background: info.color + "33", border: `2px solid ${info.color}`, color: T.parchment, borderRadius: 10, padding: "10px 18px", fontSize: 20, cursor: "pointer" }}>
               {info.emoji}
             </button>
           ))}
           {g.mode === "yearOfPlenty" && yopPicked.length === 1 && (
-            <span style={{ alignSelf: "center", fontSize: 13, color: T.gold }}>
-              picked {RES[yopPicked[0]].emoji} — 1 more
-            </span>
+            <span style={{ alignSelf: "center", fontSize: 13, color: T.gold }}>picked {RES[yopPicked[0]].emoji} — 1 more</span>
           )}
         </div>
       )}
 
-      {/* ══════════ MIDDLE ROW: Board + Sidebar ══════════ */}
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+      {/* ══════ MIDDLE: Board + Sidebar ══════ */}
+      <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
 
-        {/* BOARD (bigger, more ocean) */}
-        <div style={{ flex: "1 1 520px", maxWidth: 700 }}>
+        {/* BOARD — bigger, no cutoff */}
+        <div style={{ flex: "1 1 520px", minWidth: 0 }}>
           <Board g={g} myTurn={myTurn}
             placingSettlement={placingSettlement} placingRoad={placingRoad}
             onClickTile={clickTile} onClickVertex={clickVertex} onClickEdge={clickEdge} />
         </div>
 
         {/* SIDEBAR */}
-        <div style={{ flex: "0 0 280px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ flex: "0 0 300px", display: "flex", flexDirection: "column", gap: 10 }}>
           {/* room code */}
           {online && (
             <div style={{
@@ -385,11 +351,7 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
                 fontFamily: "'Cinzel',serif", fontSize: 16, letterSpacing: 2,
                 borderRadius: 6, padding: "4px 14px", cursor: "pointer",
               }}>{roomCode} {copied ? "✓" : "⧉"}</button>
-              {!myTurn && (
-                <div className="hand" style={{ color: T.wax, fontSize: 16, marginTop: 6 }}>
-                  waiting for {PLAYERS[activePlayer].name}…
-                </div>
-              )}
+              {!myTurn && <div className="hand" style={{ color: T.wax, fontSize: 16, marginTop: 6 }}>waiting for {PLAYERS[activePlayer].name}…</div>}
             </div>
           )}
 
@@ -400,6 +362,71 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
           <PlayerPanel g={g} player={PLAYERS[opponentId]} isMe={false} isActive={activePlayer === opponentId}
             myTurn={false} onPlayDev={() => {}}
             totalCards={Object.values(g.hands[opponentId]).reduce((a, b) => a + b, 0)} />
+
+          {/* ── DICE + END TURN (always visible, side by side) ── */}
+          {g.phase !== "setup" && (
+            <div style={{
+              background: `linear-gradient(150deg, #f4ead4, ${T.parchment})`,
+              border: `1px solid ${T.parchDeep}`, borderRadius: 8, padding: "10px 12px",
+              boxShadow: "0 2px 8px #00000022",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            }}>
+              <Dice die1={g.die1} die2={g.die2} rolling={g.rolling}
+                hasRolled={g.hasRolled} disabled={g.rolling || g.phase === "gameover" || !myTurn}
+                onRoll={rollDice} />
+              {/* End Turn — ALWAYS visible, greyed when not available */}
+              <button onClick={canEndTurn ? endTurn : undefined} style={{
+                background: canEndTurn ? PLAYERS[me].color : "#d5cbb4",
+                border: `1.5px solid ${canEndTurn ? PLAYERS[me].color : T.parchDeep}`,
+                color: canEndTurn ? "#fff" : "#a99a7a",
+                borderRadius: 7, padding: "10px 16px", fontSize: 13, fontWeight: 700,
+                fontFamily: "'Cinzel',serif", letterSpacing: 1,
+                cursor: canEndTurn ? "pointer" : "not-allowed",
+                opacity: canEndTurn ? 1 : 0.6,
+              }}>END TURN</button>
+            </div>
+          )}
+
+          {/* ── DICE FAIRNESS (always visible) ── */}
+          <div style={{
+            background: `linear-gradient(150deg, #f4ead4, ${T.parchment})`,
+            border: `1px solid ${T.parchDeep}`, borderRadius: 8, padding: "8px 10px",
+            boxShadow: "0 2px 8px #00000022",
+          }}>
+            <div style={{ fontSize: 10, color: T.inkSoft, letterSpacing: 1, marginBottom: 4, textAlign: "center" }}>
+              DICE FAIRNESS · {g.history.length} rolls
+            </div>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 50 }}>
+              {[2,3,4,5,6,7,8,9,10,11,12].map(n => {
+                const observed = counts[n] || 0;
+                const expected = g.history.length > 0 ? (PROBABILITY[n] / 36) * g.history.length : 0;
+                const barH = g.history.length > 0 ? (observed / maxCount) * 38 : 0;
+                const expH = g.history.length > 0 ? (expected / maxCount) * 38 : 0;
+                return (
+                  <div key={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+                    <div style={{ position: "relative", width: "100%", height: 38, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                      <div style={{ position: "absolute", bottom: expH, left: 0, right: 0, height: 1.5, background: T.wax, opacity: 0.6 }} />
+                      <div style={{ width: "65%", height: barH || 1, background: n === 7 ? T.wax : T.gold, borderRadius: "2px 2px 0 0" }} />
+                    </div>
+                    <span style={{ fontSize: 8, color: T.ink, fontWeight: 600 }}>{n}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {/* roll history right below */}
+            {g.history.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 2, justifyContent: "center", marginTop: 6 }}>
+                {g.history.slice(-20).map((t, i) => (
+                  <span key={i} style={{
+                    padding: "0px 4px", borderRadius: 6, fontSize: 9, fontWeight: 600,
+                    background: t === 7 ? T.wax : "#fffaf0",
+                    border: `1px solid ${t === 7 ? T.wax : T.parchDeep}`,
+                    color: t === 7 ? "#fff" : T.inkSoft,
+                  }}>{t}</span>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* building cost reference */}
           <div style={{
@@ -418,133 +445,47 @@ export default function Game({ session = { online:false, mySeat:0, roomCode:null
         </div>
       </div>
 
-      {/* ══════════ BOTTOM ROW: Cards + Dice + Actions ══════════ */}
+      {/* ══════ BOTTOM: Card Fan + Build Buttons + Trade ══════ */}
       <div style={{
-        marginTop: 14,
+        marginTop: 12,
         background: `linear-gradient(180deg, ${T.tableEdge}, #1a150e)`,
-        borderRadius: 14, padding: "14px 20px",
+        borderRadius: 14, padding: "10px 20px 6px",
         border: "1px solid #2a2418",
         boxShadow: "inset 0 2px 12px #00000044",
       }}>
-        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
+        {/* card fan */}
+        <CardHand hand={myHand} isMe={true}
+          trading={g.mode === "trade"} onClickCard={g.mode === "trade" ? addGive : undefined}
+          lastGained={g.lastGained[me] || {}} />
 
-          {/* MY CARDS (fan) */}
-          <div style={{ flex: "1 1 300px", minWidth: 200 }}>
-            <div style={{ fontSize: 10, color: T.inkSoft, letterSpacing: 1, marginBottom: 2, textAlign: "center" }}>
-              YOUR HAND
-            </div>
-            <CardHand
-              hand={myHand} isMe={true}
-              trading={g.mode === "trade"}
-              onClickCard={g.mode === "trade" ? addGive : undefined}
-              lastGained={g.lastGained[me] || {}}
-            />
+        {/* build + trade buttons */}
+        {g.hasRolled && g.phase === "play" && !g.mode && myTurn && (
+          <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 10, flexWrap: "wrap" }}>
+            <BuildBtn label="🛤️ Road" cost={COSTS.road}
+              enabled={canAfford(myHand, COSTS.road) && pieces.roads < LIMITS.road}
+              onClick={() => startBuild("road")} />
+            <BuildBtn label="🏠 Settlement" cost={COSTS.settlement}
+              enabled={canAfford(myHand, COSTS.settlement) && pieces.settlements < LIMITS.settlement}
+              onClick={() => startBuild("settlement")} />
+            <BuildBtn label="🏛️ City" cost={COSTS.city}
+              enabled={canAfford(myHand, COSTS.city) && pieces.cities < LIMITS.city && g.settlements.some(b => b.playerId === me && !b.isCity)}
+              onClick={() => startBuild("city")} />
+            <BuildBtn label="🃏 Dev Card" cost={COSTS.dev}
+              enabled={canAfford(myHand, COSTS.dev) && g.devDeck.length > 0}
+              onClick={buyDev} />
+            <BuildBtn label="🏦 TRADE" cost={{}} big={true}
+              enabled={Object.values(myHand).some(n => n >= 4)}
+              onClick={startTrade} />
           </div>
+        )}
 
-          {/* DICE + END TURN + BUILD BUTTONS */}
-          <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-            {g.phase !== "setup" && (
-              <>
-                <Dice die1={g.die1} die2={g.die2} rolling={g.rolling}
-                  hasRolled={g.hasRolled}
-                  disabled={g.rolling || g.phase === "gameover" || !myTurn}
-                  onRoll={rollDice} />
-
-                {g.hasRolled && (
-                  <button onClick={endTurn} disabled={!!g.mode || !myTurn}
-                    style={{
-                      background: g.mode ? "transparent" : PLAYERS[me].color,
-                      border: `1.5px solid ${g.mode ? "#555" : PLAYERS[me].color}`,
-                      color: g.mode ? "#777" : "#fff",
-                      borderRadius: 7, padding: "7px 20px", fontSize: 12, fontWeight: 700,
-                      fontFamily: "'Cinzel',serif", letterSpacing: 1,
-                      cursor: g.mode ? "not-allowed" : "pointer",
-                    }}>END TURN</button>
-                )}
-
-                {g.hasRolled && g.phase === "play" && !g.mode && myTurn && (
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
-                    <BuildBtn label="🛤️ Road" cost={COSTS.road} active={g.mode === "road"}
-                      enabled={canAfford(myHand, COSTS.road) && pieces.roads < LIMITS.road}
-                      onClick={() => startBuild("road")} />
-                    <BuildBtn label="🏠 Settle" cost={COSTS.settlement} active={g.mode === "settlement"}
-                      enabled={canAfford(myHand, COSTS.settlement) && pieces.settlements < LIMITS.settlement}
-                      onClick={() => startBuild("settlement")} />
-                    <BuildBtn label="🏛️ City" cost={COSTS.city} active={g.mode === "city"}
-                      enabled={canAfford(myHand, COSTS.city) && pieces.cities < LIMITS.city && g.settlements.some(b => b.playerId === me && !b.isCity)}
-                      onClick={() => startBuild("city")} />
-                    <BuildBtn label="🃏 Dev" cost={COSTS.dev}
-                      enabled={canAfford(myHand, COSTS.dev) && g.devDeck.length > 0}
-                      onClick={buyDev} />
-                    <BuildBtn label="🏦 Trade" cost={{}}
-                      enabled={Object.values(myHand).some(n => n >= 4)}
-                      onClick={startTrade} />
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* roll history */}
-            {g.history.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 2, justifyContent: "center", maxWidth: 200 }}>
-                {g.history.slice(-12).map((t, i) => (
-                  <span key={i} style={{
-                    padding: "0px 5px", borderRadius: 7, fontSize: 10, fontWeight: 600,
-                    background: t === 7 ? T.wax : "#2a2010",
-                    border: `1px solid ${t === 7 ? T.wax : "#3a3020"}`,
-                    color: t === 7 ? "#fff" : T.goldSoft,
-                  }}>{t}</span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* TRADE PANEL (visible only in trade mode) */}
-          {g.mode === "trade" && (
-            <div style={{ flex: "1 1 280px", maxWidth: 360 }}>
-              <TradePanel
-                hand={myHand} giving={giving} getting={getting}
-                onAddGive={addGive} onRemoveGive={removeGive}
-                onAddGet={addGet} onRemoveGet={removeGet}
-                onConfirm={confirmTrade} onCancel={cancelMode}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ══════════ DICE FAIRNESS ══════════ */}
-      <div style={{ marginTop: 10, textAlign: "center" }}>
-        <button onClick={() => setShowStats(s => !s)} style={{
-          background: "transparent", border: `1px solid #2a2418`, color: T.gold,
-          borderRadius: 7, padding: "4px 12px", fontSize: 11, cursor: "pointer", letterSpacing: 1,
-        }}>
-          {showStats ? "▾" : "▸"} DICE FAIRNESS ({g.history.length} rolls)
-        </button>
-        {showStats && (
-          <div style={{
-            background: T.parchment, border: `1px solid ${T.parchDeep}`,
-            borderRadius: 10, padding: 14, marginTop: 6,
-            boxShadow: "0 3px 10px #00000044", display: "inline-block",
-          }}>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 60 }}>
-              {[2,3,4,5,6,7,8,9,10,11,12].map(n => {
-                const observed = counts[n] || 0;
-                const expected = g.history.length > 0 ? (PROBABILITY[n] / 36) * g.history.length : 0;
-                const barH = g.history.length > 0 ? (observed / maxCount) * 48 : 0;
-                const expH = g.history.length > 0 ? (expected / maxCount) * 48 : 0;
-                return (
-                  <div key={n} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 24 }}>
-                    <div style={{ position: "relative", width: "100%", height: 48, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-                      <div style={{ position: "absolute", bottom: expH, left: 0, right: 0, height: 1.5, background: T.wax, opacity: 0.7 }} />
-                      <div style={{ width: "65%", height: barH || 2, background: n === 7 ? T.wax : T.gold, borderRadius: "2px 2px 0 0" }} />
-                    </div>
-                    <span style={{ fontSize: 9, color: T.ink, fontWeight: 600 }}>{n}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <p style={{ color: T.inkSoft, fontSize: 10, margin: "4px 0 0" }}>red = expected · gold = actual</p>
+        {/* trade panel */}
+        {g.mode === "trade" && (
+          <div style={{ maxWidth: 500, margin: "0 auto 10px" }}>
+            <TradePanel hand={myHand} giving={giving} getting={getting}
+              onAddGive={addGive} onRemoveGive={removeGive}
+              onAddGet={addGet} onRemoveGet={removeGet}
+              onConfirm={confirmTrade} onCancel={cancelMode} />
           </div>
         )}
       </div>
